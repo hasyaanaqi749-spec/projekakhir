@@ -2,13 +2,12 @@
   "name": "lajurel-web",
   "version": "0.1.0",
   "private": true,
-  "scripts": {
+ "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
+    "postinstall": "prisma generate",
     "start": "next start",
-    "lint": "eslint",
-    "worker": "tsx --env-file=.env src/workers/pushWorker.ts",
-    "test:push": "tsx --env-file=.env src/workers/testPush.ts"
+    "lint": "next lint"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
