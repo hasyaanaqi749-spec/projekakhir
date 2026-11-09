@@ -1,18 +1,19 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { runCancelExpiredBookings } from '@/workers/expiredBookingWorker';
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
+  // Baca headers otorisasi di luar try-catch
+  const authHeader = req.headers.get('authorization');
+  const cronSecret = process.env.CRON_SECRET;
+
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json(
+      { success: false, message: 'Unauthorized cron trigger' },
+      { status: 401 }
+    );
+  }
+
   try {
-    const authHeader = req.headers.get('authorization');
-    const cronSecret = process.env.CRON_SECRET;
-
-    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json(
-        { success: false, message: 'Unauthorized cron trigger' },
-        { status: 401 }
-      );
-    }
-
     const result = await runCancelExpiredBookings();
 
     return NextResponse.json({
@@ -22,11 +23,6 @@ export async function GET(req: Request) {
       result,
     });
   } catch (error: any) {
-    // Teruskan sinyal internal Next.js agar prerendering beralih ke dynamic secara mulus
-    if (error?.digest === 'NEXT_PRERENDER_INTERRUPTED') {
-      throw error;
-    }
-
     console.error('Error executing cron cleanup:', error);
     return NextResponse.json(
       {
