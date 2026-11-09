@@ -37,6 +37,7 @@ export async function GET(request: Request) {
       data: jadwalList,
     });
   } catch (error: any) {
+    // Jangan tangkap sinyal prerender internal Next.js
     if (error?.digest === 'NEXT_PRERENDER_INTERRUPTED') {
       throw error;
     }
