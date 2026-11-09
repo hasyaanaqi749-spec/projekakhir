@@ -1,19 +1,29 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 
-// GET: Mengambil daftar jadwal kereta untuk API
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const search = searchParams.get('search');
+    const asalId = searchParams.get('asalId');
+    const tujuanId = searchParams.get('tujuanId');
+
+    const whereClause: any = {};
+
+    if (asalId || tujuanId) {
+      whereClause.rute = {};
+      if (asalId) whereClause.rute.stasiunAsalId = asalId;
+      if (tujuanId) whereClause.rute.stasiunTujuanId = tujuanId;
+    }
 
     const jadwalList = await prisma.jadwal.findMany({
+      where: whereClause,
       include: {
         kereta: true,
         rute: {
           include: {
             stasiunAsal: true,
             stasiunTujuan: true,
+            tarif: true,
           },
         },
       },
@@ -27,45 +37,13 @@ export async function GET(request: Request) {
       data: jadwalList,
     });
   } catch (error: any) {
-    console.error('Error GET /api/admin/jadwal:', error);
-    return NextResponse.json(
-      { success: false, error: error.message || 'Gagal mengambil data jadwal.' },
-      { status: 500 }
-    );
-  }
-}
-
-// POST: Membuat jadwal keberangkatan kereta baru
-export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-    const { keretaId, ruteId, waktuBerangkat, waktuTiba } = body;
-
-    if (!keretaId || !ruteId || !waktuBerangkat || !waktuTiba) {
-      return NextResponse.json(
-        { success: false, error: 'Data parameter jadwal tidak lengkap.' },
-        { status: 400 }
-      );
+    if (error?.digest === 'NEXT_PRERENDER_INTERRUPTED') {
+      throw error;
     }
 
-    const newJadwal = await prisma.jadwal.create({
-      data: {
-        keretaId,
-        ruteId,
-        waktuBerangkat: new Date(waktuBerangkat),
-        waktuTiba: new Date(waktuTiba),
-      },
-    });
-
-    return NextResponse.json({
-      success: true,
-      message: 'Jadwal berhasil ditambahkan ke database.',
-      data: newJadwal,
-    });
-  } catch (error: any) {
-    console.error('Error POST /api/admin/jadwal:', error);
+    console.error('[API JADWAL ERROR]:', error);
     return NextResponse.json(
-      { success: false, error: error.message || 'Gagal menyimpan jadwal.' },
+      { success: false, error: error.message || 'Gagal mengambil jadwal.' },
       { status: 500 }
     );
   }

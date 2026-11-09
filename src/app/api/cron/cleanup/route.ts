@@ -3,7 +3,6 @@ import { runCancelExpiredBookings } from '@/workers/expiredBookingWorker';
 
 export async function GET(req: Request) {
   try {
-    // Validasi token otorisasi cron (opsional / jika ada header Authorization)
     const authHeader = req.headers.get('authorization');
     const cronSecret = process.env.CRON_SECRET;
 
@@ -14,7 +13,6 @@ export async function GET(req: Request) {
       );
     }
 
-    // Jalankan worker pembersihan pemesanan tiket yang kedaluwarsa
     const result = await runCancelExpiredBookings();
 
     return NextResponse.json({
@@ -24,6 +22,11 @@ export async function GET(req: Request) {
       result,
     });
   } catch (error: any) {
+    // Teruskan sinyal internal Next.js agar prerendering beralih ke dynamic secara mulus
+    if (error?.digest === 'NEXT_PRERENDER_INTERRUPTED') {
+      throw error;
+    }
+
     console.error('Error executing cron cleanup:', error);
     return NextResponse.json(
       {
