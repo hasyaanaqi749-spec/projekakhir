@@ -1,67 +1,86 @@
-// src/app/api/push/subscribe/route.ts
-// ========================================================================
-// SISTEM INFORMASI KERETA API (KELOMPOK 14)
-// Route Handler: Menyimpan Web Push Subscription Token ke Supabase
-// ========================================================================
-
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import prisma from '@/lib/prisma';
 import { getSessionUser } from '@/lib/auth';
-
-export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { endpoint, keys, userAgent } = body;
+    const { endpoint, keys } = body;
 
-    if (!endpoint || !keys?.p256dh || !keys?.auth) {
+    if (!endpoint || !keys || !keys.p256dh || !keys.auth) {
       return NextResponse.json(
-        { error: 'Payload Push Subscription tidak lengkap.' },
+        { success: false, error: 'Payload PushSubscription tidak lengkap.' },
         { status: 400 }
       );
     }
 
-    // Ambil data user yang sedang login (jika ada sesi)
-    const sessionUser = await getSessionUser();
-    
-    // Jika tidak ada user login, gunakan akun penumpang demo default
-    const userId = sessionUser?.id || '33333333-3333-3333-3333-333333333333';
+    // Ambil user login jika ada sesi
+    let activeUserId: string | null = null;
+    try {
+      const user = await getSessionUser();
+      if (user && user.id) {
+        activeUserId = user.id;
+      }
+    } catch {
+      // Abaikan jika pemanggilan auth gagal
+    }
 
-    // Simpan atau perbarui subscription di tabel push_subscriptions Supabase
-    const subscription = await prisma.pushSubscription.upsert({
-      where: {
-        userId_endpoint: {
-          userId: userId,
-          endpoint: endpoint,
-        },
-      },
-      update: {
-        keysP256dh: keys.p256dh,
-        keysAuth: keys.auth,
-        userAgent: userAgent || 'Browser Web Client',
-        updatedAt: new Date(),
-      },
-      create: {
-        userId: userId,
-        endpoint: endpoint,
-        keysP256dh: keys.p256dh,
-        keysAuth: keys.auth,
-        userAgent: userAgent || 'Browser Web Client',
-      },
+    // Jika user belum login, gunakan fallback user pertama di database agar userId tidak kosong
+    if (!activeUserId) {
+      const defaultUser = await prisma.user.findFirst();
+      if (defaultUser) {
+        activeUserId = defaultUser.id;
+      } else {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Silakan login terlebih dahulu untuk mengaktifkan notifikasi.',
+          },
+          { status: 401 }
+        );
+      }
+    }
+
+    // Cari apakah endpoint ini sudah pernah didaftarkan
+    const existingSubscription = await prisma.pushSubscription.findFirst({
+      where: { endpoint },
     });
+
+    let subscription;
+
+    if (existingSubscription) {
+      // Update menggunakan properti keysP256dh dan keysAuth sesuai schema.prisma
+      subscription = await prisma.pushSubscription.update({
+        where: { id: existingSubscription.id },
+        data: {
+          keysP256dh: keys.p256dh,
+          keysAuth: keys.auth,
+          userId: activeUserId,
+        },
+      });
+    } else {
+      // Create menggunakan properti keysP256dh dan keysAuth sesuai schema.prisma
+      subscription = await prisma.pushSubscription.create({
+        data: {
+          endpoint,
+          keysP256dh: keys.p256dh,
+          keysAuth: keys.auth,
+          userId: activeUserId,
+        },
+      });
+    }
 
     return NextResponse.json({
       success: true,
-      message: 'Web Push Subscription berhasil didaftarkan.',
-      id: subscription.id,
+      message: 'Push notification berhasil didaftarkan ke server.',
+      subscriptionId: subscription.id,
     });
-  } catch (error: any) {
-    console.error('[API PUSH SUBSCRIBE ERROR]:', error);
+  } catch (err: any) {
+    console.error('Error POST /api/push/subscribe:', err);
     return NextResponse.json(
       {
         success: false,
-        error: error.message || 'Gagal menyimpan subscription notifikasi.',
+        error: err.message || 'Gagal menyimpan subscription push ke database.',
       },
       { status: 500 }
     );

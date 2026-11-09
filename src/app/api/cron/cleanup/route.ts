@@ -1,23 +1,36 @@
 import { NextResponse } from 'next/server';
 import { runCancelExpiredBookings } from '@/workers/expiredBookingWorker';
 
-export const dynamic = 'force-dynamic';
-
 export async function GET(req: Request) {
-  // Opsional: Validasi Token Rahasia Cron agar tidak sembarang orang bisa memanggil
-  const authHeader = req.headers.get('authorization');
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
   try {
+    // Validasi token otorisasi cron (opsional / jika ada header Authorization)
+    const authHeader = req.headers.get('authorization');
+    const cronSecret = process.env.CRON_SECRET;
+
+    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+      return NextResponse.json(
+        { success: false, message: 'Unauthorized cron trigger' },
+        { status: 401 }
+      );
+    }
+
+    // Jalankan worker pembersihan pemesanan tiket yang kedaluwarsa
     const result = await runCancelExpiredBookings();
+
     return NextResponse.json({
       success: true,
+      message: 'Worker cron pembersihan tiket kedaluwarsa berhasil dieksekusi.',
       timestamp: new Date().toISOString(),
-      ...result,
+      result,
     });
   } catch (error: any) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    console.error('Error executing cron cleanup:', error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: error.message || 'Gagal menjalankan cron cleanup.',
+      },
+      { status: 500 }
+    );
   }
 }
