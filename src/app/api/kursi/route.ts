@@ -48,7 +48,6 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Ambil seluruh kursi yang sudah dibooking aktif (PENDING / PAID & belum CANCELLED)
     const tiketAktif = await prisma.detailTiket.findMany({
       where: {
         jadwalId: jadwal.id,
@@ -65,7 +64,6 @@ export async function GET(request: NextRequest) {
 
     const bookedSeatIds = new Set(tiketAktif.map((t) => t.kursiId));
 
-    // Urutkan kursi secara numerik-alfabetis (1A, 1B, ..., 2A, ..., 10D)
     const sortSeat = (a: string, b: string) => {
       const numA = parseInt(a, 10);
       const numB = parseInt(b, 10);
@@ -87,7 +85,17 @@ export async function GET(request: NextRequest) {
         })),
     }));
 
-    const tarifTerpilih = jadwal.rute.tarif.find(
+    const tarifList = jadwal.rute.tarif.map((t) => ({
+      kelas: t.kelas,
+      harga: Number(t.harga),
+    }));
+
+    const hargaPerKelas: Record<string, number> = {};
+    for (const t of tarifList) {
+      hargaPerKelas[t.kelas] = t.harga;
+    }
+
+    const tarifTerpilih = tarifList.find(
       (t) => !kelasParam || t.kelas === kelasParam
     );
 
@@ -108,16 +116,22 @@ export async function GET(request: NextRequest) {
             jarakKm: Number(jadwal.rute.jarakKm),
             stasiunAsal: jadwal.rute.stasiunAsal,
             stasiunTujuan: jadwal.rute.stasiunTujuan,
+            tarif: tarifList,
           },
         },
-        hargaPerKursi: tarifTerpilih ? Number(tarifTerpilih.harga) : 0,
+        tarif: tarifList,
+        hargaPerKelas,
+        hargaPerKursi: tarifTerpilih ? tarifTerpilih.harga : 0,
         gerbong: gerbongData,
       },
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error GET /api/kursi:', error);
     return NextResponse.json(
-      { success: false, error: error.message || 'Gagal memuat layout kursi.' },
+      {
+        success: false,
+        error: error instanceof Error ? error.message : 'Gagal memuat layout kursi.',
+      },
       { status: 500 }
     );
   }
