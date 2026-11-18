@@ -94,103 +94,113 @@ function PesanContent() {
     checkSession();
   }, []);
 
-  const loadKursi = useCallback(async () => {
-    if (!jadwalId) {
-      setLoading(false);
-      setErrorMsg('Parameter jadwalId tidak ditemukan.');
-      return;
-    }
-
-    setLoading(true);
-    setErrorMsg(null);
-    try {
-      const res = await fetch(
-        `/api/kursi?jadwalId=${encodeURIComponent(jadwalId)}`,
-        { cache: 'no-store' }
-      );
-      const json = await res.json();
-      if (!res.ok) {
-        throw new Error(json?.error || 'Gagal memuat data kursi.');
+  const loadKursi = useCallback(
+    async (silent = false) => {
+      if (!jadwalId) {
+        setLoading(false);
+        setErrorMsg('Parameter jadwalId tidak ditemukan.');
+        return;
       }
 
-      const payload = json?.data ?? json;
-      const gList: GerbongItem[] =
-        payload?.gerbong ?? payload?.gerbongList ?? [];
-      const jDetail: JadwalDetail | null = payload?.jadwal ?? null;
+      if (!silent) {
+        setLoading(true);
+        setErrorMsg(null);
+      }
 
-      setJadwal(jDetail);
-      setGerbongList(gList);
-
-      // Kumpulkan tarif dari berbagai kemungkinan field response
-      const collectedTarif: Record<string, number> = {};
-      const applyTarifArray = (arr?: TarifItem[]) => {
-        if (!Array.isArray(arr)) return;
-        for (const t of arr) {
-          if (t?.kelas && Number(t.harga) > 0) {
-            collectedTarif[t.kelas] = Number(t.harga);
-          }
-        }
-      };
-
-      applyTarifArray(payload?.tarif);
-      applyTarifArray(jDetail?.tarif);
-      applyTarifArray(jDetail?.rute?.tarif);
-
-      if (payload?.hargaPerKelas) {
-        Object.entries(payload.hargaPerKelas as Record<string, number>).forEach(
-          ([k, v]) => {
-            if (Number(v) > 0) collectedTarif[k] = Number(v);
-          }
+      try {
+        const res = await fetch(
+          `/api/kursi?jadwalId=${encodeURIComponent(jadwalId)}`,
+          { cache: 'no-store' }
         );
-      }
-      if (jDetail?.hargaPerKelas) {
-        Object.entries(jDetail.hargaPerKelas).forEach(([k, v]) => {
-          if (Number(v) > 0) collectedTarif[k] = Number(v);
-        });
-      }
+        const json = await res.json();
+        if (!res.ok) {
+          throw new Error(json?.error || 'Gagal memuat data kursi.');
+        }
 
-      // Fallback ambil tarif dari /api/jadwal jika belum ada
-      if (Object.keys(collectedTarif).length === 0) {
-        try {
-          const jadwalRes = await fetch('/api/jadwal', { cache: 'no-store' });
-          if (jadwalRes.ok) {
-            const jadwalJson = await jadwalRes.json();
-            const list = Array.isArray(jadwalJson)
-              ? jadwalJson
-              : (jadwalJson?.data ?? []);
-            const foundJadwal = list.find(
-              (item: { id: string }) => item.id === jadwalId
-            );
-            if (foundJadwal) {
-              applyTarifArray(foundJadwal.kelasTersedia);
-              applyTarifArray(foundJadwal.tarif);
-              applyTarifArray(foundJadwal.rute?.tarif);
+        const payload = json?.data ?? json;
+        const gList: GerbongItem[] =
+          payload?.gerbong ?? payload?.gerbongList ?? [];
+        const jDetail: JadwalDetail | null = payload?.jadwal ?? null;
+
+        setJadwal(jDetail);
+        setGerbongList(gList);
+
+        const collectedTarif: Record<string, number> = {};
+        const applyTarifArray = (arr?: TarifItem[]) => {
+          if (!Array.isArray(arr)) return;
+          for (const t of arr) {
+            if (t?.kelas && Number(t.harga) > 0) {
+              collectedTarif[t.kelas] = Number(t.harga);
             }
           }
-        } catch {
-          // Abaikan jika fallback gagal
+        };
+
+        applyTarifArray(payload?.tarif);
+        applyTarifArray(jDetail?.tarif);
+        applyTarifArray(jDetail?.rute?.tarif);
+
+        if (payload?.hargaPerKelas) {
+          Object.entries(payload.hargaPerKelas as Record<string, number>).forEach(
+            ([k, v]) => {
+              if (Number(v) > 0) collectedTarif[k] = Number(v);
+            }
+          );
+        }
+        if (jDetail?.hargaPerKelas) {
+          Object.entries(jDetail.hargaPerKelas).forEach(([k, v]) => {
+            if (Number(v) > 0) collectedTarif[k] = Number(v);
+          });
+        }
+
+        if (Object.keys(collectedTarif).length === 0) {
+          try {
+            const jadwalRes = await fetch('/api/jadwal', { cache: 'no-store' });
+            if (jadwalRes.ok) {
+              const jadwalJson = await jadwalRes.json();
+              const list = Array.isArray(jadwalJson)
+                ? jadwalJson
+                : (jadwalJson?.data ?? []);
+              const foundJadwal = list.find(
+                (item: { id: string }) => item.id === jadwalId
+              );
+              if (foundJadwal) {
+                applyTarifArray(foundJadwal.kelasTersedia);
+                applyTarifArray(foundJadwal.tarif);
+                applyTarifArray(foundJadwal.rute?.tarif);
+              }
+            }
+          } catch {
+            // Abaikan jika fallback gagal
+          }
+        }
+
+        setTarifMap(collectedTarif);
+
+        if (!silent) {
+          const firstMatching =
+            gList.find((g) => g.kelas === selectedKelas) ?? gList[0];
+          if (firstMatching) {
+            setSelectedKelas(firstMatching.kelas);
+            setActiveGerbongId(firstMatching.id);
+          }
+        }
+      } catch (err) {
+        if (!silent) {
+          setErrorMsg(
+            err instanceof Error ? err.message : 'Gagal memuat layout kursi.'
+          );
+        }
+      } finally {
+        if (!silent) {
+          setLoading(false);
         }
       }
-
-      setTarifMap(collectedTarif);
-
-      const firstMatching =
-        gList.find((g) => g.kelas === selectedKelas) ?? gList[0];
-      if (firstMatching) {
-        setSelectedKelas(firstMatching.kelas);
-        setActiveGerbongId(firstMatching.id);
-      }
-    } catch (err) {
-      setErrorMsg(
-        err instanceof Error ? err.message : 'Gagal memuat layout kursi.'
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [jadwalId, selectedKelas]);
+    },
+    [jadwalId, selectedKelas]
+  );
 
   useEffect(() => {
-    loadKursi();
+    loadKursi(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jadwalId]);
 
@@ -227,7 +237,7 @@ function PesanContent() {
         return prev.filter((p) => p.kursiId !== kursi.id);
       }
       if (prev.length >= 4) {
-        setErrorMsg('Maksimal 4 penumpang dalam 1 kali pemesanan.');
+        setErrorMsg('Maksimal 4 kursi/penumpang dalam 1 kali pemesanan.');
         return prev;
       }
       return [
@@ -255,6 +265,7 @@ function PesanContent() {
   const handleKelasChange = (kelas: 'EKSEKUTIF' | 'BISNIS' | 'EKONOMI') => {
     setSelectedKelas(kelas);
     setPassengers([]);
+    setErrorMsg(null);
     const match = gerbongList.find((g) => g.kelas === kelas);
     if (match) setActiveGerbongId(match.id);
   };
@@ -280,13 +291,13 @@ function PesanContent() {
     }
 
     for (const p of passengers) {
-      if (p.penumpangNama.trim().length < 2) {
-        setErrorMsg(`Lengkapi nama penumpang untuk kursi ${p.labelKursi}.`);
+      if (p.penumpangNama.trim().length < 3) {
+        setErrorMsg(`Nama penumpang minimal 3 huruf untuk kursi ${p.labelKursi}.`);
         return;
       }
-      if (p.penumpangIdentitas.trim().length < 8) {
+      if (p.penumpangIdentitas.trim().length < 10) {
         setErrorMsg(
-          `NIK/No. Identitas minimal 8 karakter untuk kursi ${p.labelKursi}.`
+          `NIK / No. Identitas minimal 10 karakter untuk kursi ${p.labelKursi}.`
         );
         return;
       }
@@ -302,8 +313,8 @@ function PesanContent() {
           kelas: selectedKelas,
           penumpang: passengers.map((p) => ({
             kursiId: p.kursiId,
-            penumpangNama: p.penumpangNama.trim(),
-            penumpangIdentitas: p.penumpangIdentitas.trim(),
+            nama: p.penumpangNama.trim(),
+            identitas: p.penumpangIdentitas.trim(),
           })),
         }),
       });
@@ -317,6 +328,9 @@ function PesanContent() {
         return;
       }
       if (!res.ok) {
+        if (res.status === 409) {
+          loadKursi(true);
+        }
         const detailErr =
           json?.error ||
           json?.message ||
@@ -335,7 +349,6 @@ function PesanContent() {
       setErrorMsg(
         err instanceof Error ? err.message : 'Terjadi kesalahan saat memesan.'
       );
-      loadKursi();
     } finally {
       setSubmitting(false);
     }
@@ -399,9 +412,17 @@ function PesanContent() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* Panel Kiri: Pilih Kelas, Gerbong & Kursi */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 sm:p-6 lg:col-span-7">
-          <h2 className="text-base font-bold text-white sm:text-lg">
-            1. Pilih Kelas & Kursi
-          </h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-base font-bold text-white sm:text-lg">
+              1. Pilih Kelas & Kursi
+            </h2>
+            <span className="rounded-lg bg-amber-500/10 px-2.5 py-1 text-[11px] font-semibold text-amber-300">
+              Dipilih: {passengers.length} / 4 kursi
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-slate-400">
+            Ketuk 1 sampai 4 kursi untuk menambah penumpang otomatis (1 kursi = 1 penumpang).
+          </p>
 
           {/* Tabs Kelas */}
           <div className="mt-3 flex flex-wrap gap-2">
@@ -503,7 +524,7 @@ function PesanContent() {
               2. Data Penumpang ({passengers.length}/4)
             </h2>
             <p className="mt-1 text-xs text-slate-400">
-              Isi nama lengkap dan NIK sesuai KTP/Paspor untuk verifikasi boarding.
+              Isi nama lengkap dan NIK sesuai KTP/Paspor. Untuk menambah penumpang (2/4 s.d. 4/4), ketuk kursi lain di sebelah kiri.
             </p>
 
             {isLoggedIn === false && (
@@ -567,7 +588,7 @@ function PesanContent() {
                       <input
                         type="text"
                         required
-                        placeholder="NIK / Nomor Identitas (16 digit)"
+                        placeholder="NIK / Nomor Identitas (min. 10 digit)"
                         value={p.penumpangIdentitas}
                         onChange={(e) =>
                           updatePassengerField(
