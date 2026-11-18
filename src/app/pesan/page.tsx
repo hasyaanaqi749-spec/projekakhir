@@ -19,6 +19,11 @@ interface GerbongItem {
   kursi: KursiItem[];
 }
 
+interface TarifItem {
+  kelas: string;
+  harga: number | string;
+}
+
 interface JadwalDetail {
   id: string;
   waktuBerangkat: string;
@@ -30,8 +35,9 @@ interface JadwalDetail {
   rute: {
     stasiunAsal: { namaStasiun: string; kodeStasiun: string };
     stasiunTujuan: { namaStasiun: string; kodeStasiun: string };
-    tarif?: Array<{ kelas: string; harga: number }>;
+    tarif?: TarifItem[];
   };
+  tarif?: TarifItem[];
   hargaPerKelas?: Record<string, number>;
 }
 
@@ -61,12 +67,32 @@ function PesanContent() {
 
   const [jadwal, setJadwal] = useState<JadwalDetail | null>(null);
   const [gerbongList, setGerbongList] = useState<GerbongItem[]>([]);
+  const [tarifMap, setTarifMap] = useState<Record<string, number>>({});
   const [selectedKelas, setSelectedKelas] = useState(initialKelas);
   const [activeGerbongId, setActiveGerbongId] = useState<string>('');
   const [passengers, setPassengers] = useState<PassengerForm[]>([]);
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const res = await fetch('/api/auth/me', { cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          const user = data?.user ?? (data?.id ? data : null);
+          setIsLoggedIn(Boolean(user));
+        } else {
+          setIsLoggedIn(false);
+        }
+      } catch {
+        setIsLoggedIn(false);
+      }
+    };
+    checkSession();
+  }, []);
 
   const loadKursi = useCallback(async () => {
     if (!jadwalId) {
@@ -90,8 +116,63 @@ function PesanContent() {
       const payload = json?.data ?? json;
       const gList: GerbongItem[] =
         payload?.gerbong ?? payload?.gerbongList ?? [];
-      setJadwal(payload?.jadwal ?? null);
+      const jDetail: JadwalDetail | null = payload?.jadwal ?? null;
+
+      setJadwal(jDetail);
       setGerbongList(gList);
+
+      // Kumpulkan tarif dari berbagai kemungkinan field response
+      const collectedTarif: Record<string, number> = {};
+      const applyTarifArray = (arr?: TarifItem[]) => {
+        if (!Array.isArray(arr)) return;
+        for (const t of arr) {
+          if (t?.kelas && Number(t.harga) > 0) {
+            collectedTarif[t.kelas] = Number(t.harga);
+          }
+        }
+      };
+
+      applyTarifArray(payload?.tarif);
+      applyTarifArray(jDetail?.tarif);
+      applyTarifArray(jDetail?.rute?.tarif);
+
+      if (payload?.hargaPerKelas) {
+        Object.entries(payload.hargaPerKelas as Record<string, number>).forEach(
+          ([k, v]) => {
+            if (Number(v) > 0) collectedTarif[k] = Number(v);
+          }
+        );
+      }
+      if (jDetail?.hargaPerKelas) {
+        Object.entries(jDetail.hargaPerKelas).forEach(([k, v]) => {
+          if (Number(v) > 0) collectedTarif[k] = Number(v);
+        });
+      }
+
+      // Fallback ambil tarif dari /api/jadwal jika belum ada
+      if (Object.keys(collectedTarif).length === 0) {
+        try {
+          const jadwalRes = await fetch('/api/jadwal', { cache: 'no-store' });
+          if (jadwalRes.ok) {
+            const jadwalJson = await jadwalRes.json();
+            const list = Array.isArray(jadwalJson)
+              ? jadwalJson
+              : (jadwalJson?.data ?? []);
+            const foundJadwal = list.find(
+              (item: { id: string }) => item.id === jadwalId
+            );
+            if (foundJadwal) {
+              applyTarifArray(foundJadwal.kelasTersedia);
+              applyTarifArray(foundJadwal.tarif);
+              applyTarifArray(foundJadwal.rute?.tarif);
+            }
+          }
+        } catch {
+          // Abaikan jika fallback gagal
+        }
+      }
+
+      setTarifMap(collectedTarif);
 
       const firstMatching =
         gList.find((g) => g.kelas === selectedKelas) ?? gList[0];
@@ -132,13 +213,8 @@ function PesanContent() {
   }, [gerbongList]);
 
   const hargaSatuan = useMemo(() => {
-    if (!jadwal) return 0;
-    if (jadwal.hargaPerKelas?.[selectedKelas]) {
-      return Number(jadwal.hargaPerKelas[selectedKelas]);
-    }
-    const found = jadwal.rute?.tarif?.find((t) => t.kelas === selectedKelas);
-    return found ? Number(found.harga) : 0;
-  }, [jadwal, selectedKelas]);
+    return tarifMap[selectedKelas] ?? 0;
+  }, [tarifMap, selectedKelas]);
 
   const toggleSeat = (kursi: KursiItem, gerbong: GerbongItem) => {
     const booked = Boolean(kursi.isBooked ?? kursi.terisi);
@@ -183,9 +259,20 @@ function PesanContent() {
     if (match) setActiveGerbongId(match.id);
   };
 
+  const loginRedirectUrl = `/login?redirect=${encodeURIComponent(
+    `/pesan?jadwalId=${jadwalId}&kelas=${selectedKelas}`
+  )}`;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+
+    if (isLoggedIn === false) {
+      setErrorMsg(
+        'Silakan masuk ke akun Anda terlebih dahulu sebelum melanjutkan ke pembayaran.'
+      );
+      return;
+    }
 
     if (passengers.length === 0) {
       setErrorMsg('Silakan pilih minimal 1 kursi terlebih dahulu.');
@@ -198,7 +285,9 @@ function PesanContent() {
         return;
       }
       if (p.penumpangIdentitas.trim().length < 8) {
-        setErrorMsg(`NIK/No. Identitas minimal 8 karakter untuk kursi ${p.labelKursi}.`);
+        setErrorMsg(
+          `NIK/No. Identitas minimal 8 karakter untuk kursi ${p.labelKursi}.`
+        );
         return;
       }
     }
@@ -221,16 +310,26 @@ function PesanContent() {
 
       const json = await res.json();
       if (res.status === 401) {
+        setIsLoggedIn(false);
         setErrorMsg(
-          'Anda belum masuk. Silakan login terlebih dahulu untuk melanjutkan pemesanan.'
+          'Sesi login belum aktif. Silakan masuk terlebih dahulu untuk melanjutkan pemesanan.'
         );
         return;
       }
       if (!res.ok) {
-        throw new Error(json?.error || 'Gagal membuat pemesanan tiket.');
+        const detailErr =
+          json?.error ||
+          json?.message ||
+          'Gagal membuat pemesanan tiket. Periksa kembali data Anda.';
+        throw new Error(detailErr);
       }
 
-      const kodeBooking = json?.data?.kodeBooking ?? json?.kodeBooking;
+      const kodeBooking =
+        json?.data?.kodeBooking ?? json?.kodeBooking ?? json?.booking?.kodeBooking;
+      if (!kodeBooking) {
+        throw new Error('Kode booking tidak dikembalikan oleh server.');
+      }
+
       router.push(`/pembayaran?kode=${encodeURIComponent(kodeBooking)}`);
     } catch (err) {
       setErrorMsg(
@@ -288,26 +387,14 @@ function PesanContent() {
           <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-2.5 sm:text-right">
             <p className="text-xs text-slate-400">Tarif {selectedKelas}</p>
             <p className="text-lg font-extrabold text-amber-400">
-              {formatRupiah(hargaSatuan)}{' '}
-              <span className="text-xs font-normal text-slate-400">/ kursi</span>
+              {hargaSatuan > 0 ? formatRupiah(hargaSatuan) : 'Sesuai Tarif Rute'}{' '}
+              {hargaSatuan > 0 && (
+                <span className="text-xs font-normal text-slate-400">/ kursi</span>
+              )}
             </p>
           </div>
         </div>
       </div>
-
-      {errorMsg && (
-        <div className="mb-5 flex flex-col gap-2 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-200 sm:flex-row sm:items-center sm:justify-between">
-          <span>{errorMsg}</span>
-          {errorMsg.toLowerCase().includes('login') && (
-            <Link
-              href={`/login?redirect=${encodeURIComponent(`/pesan?jadwalId=${jadwalId}&kelas=${selectedKelas}`)}`}
-              className="shrink-0 rounded-lg bg-amber-500 px-3 py-1.5 text-center text-xs font-bold text-slate-950"
-            >
-              Masuk Sekarang
-            </Link>
-          )}
-        </div>
-      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* Panel Kiri: Pilih Kelas, Gerbong & Kursi */}
@@ -368,7 +455,7 @@ function PesanContent() {
             </span>
           </div>
 
-          {/* Grid Kursi Responsif (4 kolom + lorong tengah) */}
+          {/* Grid Kursi Responsif */}
           {activeGerbong && (
             <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950 p-3 sm:p-5">
               <div className="mb-3 grid grid-cols-5 text-center text-[11px] font-bold text-slate-500">
@@ -418,6 +505,21 @@ function PesanContent() {
             <p className="mt-1 text-xs text-slate-400">
               Isi nama lengkap dan NIK sesuai KTP/Paspor untuk verifikasi boarding.
             </p>
+
+            {isLoggedIn === false && (
+              <div className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs text-amber-200">
+                <p className="font-semibold">Anda belum login ke akun penumpang.</p>
+                <p className="mt-1 text-amber-300/90">
+                  Masuk terlebih dahulu agar tiket tersimpan ke akun dan riwayat Anda.
+                </p>
+                <Link
+                  href={loginRedirectUrl}
+                  className="mt-2.5 inline-flex rounded-lg bg-amber-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-amber-400"
+                >
+                  Masuk Sekarang →
+                </Link>
+              </div>
+            )}
 
             {passengers.length === 0 ? (
               <div className="mt-4 rounded-xl border border-dashed border-slate-700 bg-slate-950/60 p-6 text-center text-xs text-slate-400">
@@ -489,9 +591,25 @@ function PesanContent() {
                 Total ({passengers.length} tiket)
               </span>
               <span className="text-xl font-extrabold text-amber-400">
-                {formatRupiah(hargaSatuan * passengers.length)}
+                {hargaSatuan > 0
+                  ? formatRupiah(hargaSatuan * passengers.length)
+                  : 'Dihitung saat checkout'}
               </span>
             </div>
+
+            {errorMsg && (
+              <div className="mt-3 flex flex-col gap-2 rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-200">
+                <span>{errorMsg}</span>
+                {isLoggedIn === false && (
+                  <Link
+                    href={loginRedirectUrl}
+                    className="w-fit rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-slate-950"
+                  >
+                    Masuk ke Akun
+                  </Link>
+                )}
+              </div>
+            )}
 
             <button
               type="submit"
