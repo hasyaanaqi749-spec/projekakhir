@@ -1,275 +1,371 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 
-interface PemesananItem {
+interface PenumpangItem {
+  nama: string;
+  identitas: string;
+  kursi: string;
+  statusTiket: string;
+}
+
+interface BookingReportItem {
   id: string;
   kodeBooking: string;
-  penumpangNama: string;
-  identitas: string;
-  keretaNama: string;
+  pemesanNama: string;
+  pemesanEmail: string;
+  penumpangList?: PenumpangItem[];
+  namaKereta: string;
   rute: string;
-  kelas: string;
-  kursi: string;
-  tanggalWaktu: string;
   totalBayar: number;
-  metodePembayaran: string;
   statusPembayaran: 'PAID' | 'PENDING' | 'CANCELLED';
+  createdAt: string;
+}
+
+interface ReportStats {
+  totalPesanan: number;
+  pendingCount: number;
+  paidCount: number;
+  totalPendapatan: number;
+}
+
+function formatRupiah(val: number) {
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    maximumFractionDigits: 0,
+  }).format(val);
+}
+
+function formatTanggal(iso: string) {
+  return new Date(iso).toLocaleDateString('id-ID', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Jakarta',
+  });
 }
 
 export default function LaporanPemesananPage() {
-  const [dataPemesanan] = useState<PemesananItem[]>([
-    {
-      id: 'ORD-101',
-      kodeBooking: 'RLK-98213',
-      penumpangNama: 'Budi Santoso',
-      identitas: '3201234567890001',
-      keretaNama: 'Argo Bromo Anggrek',
-      rute: 'Gambir (GMR) → Surabaya Pasarturi (SBI)',
-      kelas: 'Eksekutif (EKS-1)',
-      kursi: '4A',
-      tanggalWaktu: '09 Nov 2026, 08:30 WIB',
-      totalBayar: 557500,
-      metodePembayaran: 'QRIS',
-      statusPembayaran: 'PAID',
-    },
-    {
-      id: 'ORD-102',
-      kodeBooking: 'RLK-77120',
-      penumpangNama: 'Siti Aminah',
-      identitas: '3302987654320002',
-      keretaNama: 'Taksaka Malam',
-      rute: 'Gambir (GMR) → Yogyakarta (YK)',
-      kelas: 'Eksekutif (EKS-2)',
-      kursi: '7C',
-      tanggalWaktu: '09 Nov 2026, 09:15 WIB',
-      totalBayar: 427500,
-      metodePembayaran: 'Virtual Account BCA',
-      statusPembayaran: 'PAID',
-    },
-    {
-      id: 'ORD-103',
-      kodeBooking: 'RLK-65491',
-      penumpangNama: 'Ahmad Fauzi',
-      identitas: '3504123456780003',
-      keretaNama: 'Matarmaja',
-      rute: 'Pasar Senen (PSE) → Malang (ML)',
-      kelas: 'Ekonomi (EKO-1)',
-      kursi: '12B',
-      tanggalWaktu: '09 Nov 2026, 10:00 WIB',
-      totalBayar: 190000,
-      metodePembayaran: 'Mandiri Livin',
-      statusPembayaran: 'PAID',
-    },
-    {
-      id: 'ORD-104',
-      kodeBooking: 'RLK-44219',
-      penumpangNama: 'Dewi Lestari',
-      identitas: '3171098765430004',
-      keretaNama: 'Argo Parahyangan',
-      rute: 'Gambir (GMR) → Bandung (BD)',
-      kelas: 'Bisnis (BIS-1)',
-      kursi: '2D',
-      tanggalWaktu: '09 Nov 2026, 11:20 WIB',
-      totalBayar: 257500,
-      metodePembayaran: 'QRIS',
-      statusPembayaran: 'PENDING',
-    },
-    {
-      id: 'ORD-105',
-      kodeBooking: 'RLK-11082',
-      penumpangNama: 'Reza Rahardian',
-      identitas: '3273112233440005',
-      keretaNama: 'Kertajaya Tambahan',
-      rute: 'Pasar Senen (PSE) → Surabaya Pasarturi (SBI)',
-      kelas: 'Ekonomi (EKO-2)',
-      kursi: '9A',
-      tanggalWaktu: '09 Nov 2026, 12:45 WIB',
-      totalBayar: 215000,
-      metodePembayaran: 'Indomaret / Alfamart',
-      statusPembayaran: 'CANCELLED',
-    },
-  ]);
-
+  const [dataPemesanan, setDataPemesanan] = useState<BookingReportItem[]>([]);
+  const [stats, setStats] = useState<ReportStats>({
+    totalPesanan: 0,
+    pendingCount: 0,
+    paidCount: 0,
+    totalPendapatan: 0,
+  });
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('SEMUA');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const formatRupiah = (val: number) => {
-    return new Intl.NumberFormat('id-ID', {
-      style: 'currency',
-      currency: 'IDR',
-      maximumFractionDigits: 0,
-    }).format(val);
-  };
+  const fetchLaporan = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch('/api/admin', { cache: 'no-store' });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json?.error || 'Gagal memuat data laporan.');
+      }
+      setDataPemesanan(json.bookings ?? []);
+      setStats({
+        totalPesanan: json.stats?.totalPesanan ?? 0,
+        pendingCount: json.stats?.pendingCount ?? 0,
+        paidCount: json.stats?.paidCount ?? 0,
+        totalPendapatan: json.stats?.totalPendapatan ?? 0,
+      });
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : 'Gagal terhubung ke database.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchLaporan();
+  }, [fetchLaporan]);
 
   const filteredData = dataPemesanan.filter((item) => {
-    const matchStatus = filterStatus === 'SEMUA' || item.statusPembayaran === filterStatus;
+    const matchStatus =
+      filterStatus === 'SEMUA' || item.statusPembayaran === filterStatus;
+    const q = searchQuery.toLowerCase();
+    const passengerNames = (item.penumpangList || [])
+      .map((p) => p.nama.toLowerCase())
+      .join(' ');
     const matchSearch =
-      item.kodeBooking.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.penumpangNama.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.keretaNama.toLowerCase().includes(searchQuery.toLowerCase());
+      item.kodeBooking.toLowerCase().includes(q) ||
+      item.pemesanNama.toLowerCase().includes(q) ||
+      item.namaKereta.toLowerCase().includes(q) ||
+      passengerNames.includes(q);
     return matchStatus && matchSearch;
   });
 
-  const totalPendapatanLunas = dataPemesanan
+  const totalPenumpangLunas = dataPemesanan
     .filter((d) => d.statusPembayaran === 'PAID')
-    .reduce((acc, curr) => acc + curr.totalBayar, 0);
-
-  const totalTiketLunas = dataPemesanan.filter((d) => d.statusPembayaran === 'PAID').length;
-
-  const handlePrint = () => {
-    window.print();
-  };
+    .reduce((sum, item) => sum + (item.penumpangList?.length || 1), 0);
 
   return (
     <div className="space-y-6">
-      {/* Header Laporan */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {/* Header */}
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2">
-            <span>📊</span> Laporan Pemesanan & Keuangan
+          <h1 className="text-xl font-black tracking-tight text-white sm:text-2xl">
+            Laporan Pemesanan &amp; Keuangan
           </h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Rekapitulasi penjualan tiket kereta api dan status transaksi penumpang (Railink Kelompok 14).
+          <p className="mt-1 text-xs text-slate-400 sm:text-sm">
+            Rekapitulasi penjualan tiket kereta api langsung dari Supabase (Kelompok 14).
           </p>
         </div>
-        <div className="flex gap-2 shrink-0">
+        <div className="flex flex-wrap gap-2 shrink-0 print:hidden">
           <button
-            onClick={handlePrint}
-            className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold text-sm rounded-xl border border-slate-700 transition flex items-center gap-2 shadow-lg"
+            type="button"
+            onClick={fetchLaporan}
+            disabled={loading}
+            className="min-h-[42px] rounded-xl border border-slate-700 bg-slate-800 px-4 text-xs font-bold text-slate-200 transition hover:bg-slate-700"
           >
-            <span>🖨️</span> Cetak / Simpan PDF
+            {loading ? 'Memuat...' : 'Refresh Data'}
+          </button>
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="min-h-[42px] rounded-xl bg-amber-500 px-4 text-xs font-bold text-slate-950 transition hover:bg-amber-400"
+          >
+            Cetak / Simpan PDF
           </button>
         </div>
       </div>
 
-      {/* KPI Cards Ringkasan */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-          <p className="text-xs font-semibold text-slate-400 uppercase">Total Pendapatan Terverifikasi</p>
-          <p className="text-2xl font-black text-emerald-400 mt-1 font-mono">
-            {formatRupiah(totalPendapatanLunas)}
+      {errorMsg && (
+        <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-xs text-rose-200">
+          {errorMsg}
+        </div>
+      )}
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
+          <p className="text-xs font-semibold uppercase text-slate-400">
+            Total Pendapatan Lunas
           </p>
-          <p className="text-[11px] text-slate-500 mt-1">Dari {totalTiketLunas} pesanan berstatus PAID</p>
+          <p className="mt-1 font-mono text-2xl font-black text-emerald-400">
+            {formatRupiah(stats.totalPendapatan)}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Dari {stats.paidCount} transaksi berstatus PAID
+          </p>
         </div>
 
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-          <p className="text-xs font-semibold text-slate-400 uppercase">Total Tiket Terjual</p>
-          <p className="text-2xl font-black text-amber-400 mt-1">{totalTiketLunas} Kursi</p>
-          <p className="text-[11px] text-slate-500 mt-1">Hari ini (09 Nov 2026)</p>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
+          <p className="text-xs font-semibold uppercase text-slate-400">
+            Kursi Terjual (PAID)
+          </p>
+          <p className="mt-1 text-2xl font-black text-amber-400">
+            {totalPenumpangLunas} Kursi
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Tercatat di detail tiket Supabase
+          </p>
         </div>
 
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-          <p className="text-xs font-semibold text-slate-400 uppercase">Tingkat Okupansi Kursi</p>
-          <p className="text-2xl font-black text-blue-400 mt-1">88.5%</p>
-          <p className="text-[11px] text-slate-500 mt-1">Target harian 85% tercapai</p>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
+          <p className="text-xs font-semibold uppercase text-slate-400">
+            Total Transaksi
+          </p>
+          <p className="mt-1 text-2xl font-black text-blue-400">
+            {stats.totalPesanan} Pesanan
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Semua status pemesanan
+          </p>
         </div>
 
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-          <p className="text-xs font-semibold text-slate-400 uppercase">Metode Terfavorit</p>
-          <p className="text-2xl font-black text-purple-400 mt-1">QRIS (60%)</p>
-          <p className="text-[11px] text-slate-500 mt-1">Disusul Virtual Account BCA</p>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
+          <p className="text-xs font-semibold uppercase text-slate-400">
+            Menunggu Pembayaran
+          </p>
+          <p className="mt-1 text-2xl font-black text-purple-400">
+            {stats.pendingCount} Transaksi
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Status PENDING aktif
+          </p>
         </div>
       </div>
 
       {/* Filter & Search */}
-      <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex flex-col md:flex-row gap-4 justify-between items-center">
-        <div className="relative w-full md:w-96">
-          <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
-            🔍
-          </span>
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Cari kode booking atau nama penumpang..."
-            className="w-full pl-10 pr-4 py-2 bg-slate-950 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
-          />
-        </div>
+      <div className="flex flex-col items-stretch justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900 p-4 md:flex-row md:items-center print:hidden">
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Cari kode booking, nama penumpang, kereta..."
+          className="min-h-[42px] w-full rounded-xl border border-slate-700 bg-slate-950 px-4 text-base text-white placeholder-slate-500 focus:border-amber-500 focus:outline-none md:w-96 md:text-sm"
+        />
 
-        <div className="flex items-center gap-2 w-full md:w-auto">
-          <span className="text-xs text-slate-400 font-semibold whitespace-nowrap">Filter Status:</span>
-          <div className="flex gap-1.5 overflow-x-auto">
-            {['SEMUA', 'PAID', 'PENDING', 'CANCELLED'].map((st) => (
-              <button
-                key={st}
-                onClick={() => setFilterStatus(st)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
-                  filterStatus === st
-                    ? 'bg-amber-500 text-slate-950'
-                    : 'bg-slate-800 text-slate-400 hover:text-white'
-                }`}
-              >
-                {st}
-              </button>
-            ))}
-          </div>
+        <div className="flex gap-1.5 overflow-x-auto pb-1 md:pb-0">
+          {['SEMUA', 'PAID', 'PENDING', 'CANCELLED'].map((st) => (
+            <button
+              key={st}
+              type="button"
+              onClick={() => setFilterStatus(st)}
+              className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                filterStatus === st
+                  ? 'bg-amber-500 text-slate-950'
+                  : 'bg-slate-800 text-slate-400 hover:text-white'
+              }`}
+            >
+              {st}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Tabel Data Pemesanan */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+      {/* Tampilan Mobile (Cards) */}
+      <div className="space-y-3 md:hidden">
+        {loading ? (
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center text-xs text-slate-400">
+            Memuat laporan transaksi dari Supabase...
+          </div>
+        ) : filteredData.length === 0 ? (
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center text-xs text-slate-400">
+            Tidak ada catatan transaksi yang sesuai.
+          </div>
+        ) : (
+          filteredData.map((order) => (
+            <div
+              key={order.id}
+              className="space-y-2.5 rounded-2xl border border-slate-800 bg-slate-900 p-4 text-xs"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="rounded border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 font-mono font-bold text-amber-400">
+                  {order.kodeBooking}
+                </span>
+                <span
+                  className={`rounded-md border px-2 py-0.5 text-[11px] font-bold ${
+                    order.statusPembayaran === 'PAID'
+                      ? 'border-emerald-800 bg-emerald-950 text-emerald-400'
+                      : order.statusPembayaran === 'PENDING'
+                        ? 'border-amber-800 bg-amber-950 text-amber-400'
+                        : 'border-red-800 bg-red-950 text-red-400'
+                  }`}
+                >
+                  {order.statusPembayaran}
+                </span>
+              </div>
+
+              <div>
+                {order.penumpangList && order.penumpangList.length > 0 ? (
+                  order.penumpangList.map((p, idx) => (
+                    <p key={idx} className="font-bold text-white">
+                      {p.nama} ({p.kursi})
+                    </p>
+                  ))
+                ) : (
+                  <p className="font-bold text-white">{order.pemesanNama}</p>
+                )}
+                <p className="mt-0.5 text-[11px] text-slate-400">
+                  {order.namaKereta} • {order.rute}
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between border-t border-slate-800 pt-2">
+                <span className="text-[11px] text-slate-500">
+                  {formatTanggal(order.createdAt)}
+                </span>
+                <span className="font-mono text-sm font-black text-white">
+                  {formatRupiah(order.totalBayar)}
+                </span>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Tampilan Desktop (Table) */}
+      <div className="hidden overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-xl md:block">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm text-slate-300">
-            <thead className="bg-slate-950 text-xs font-semibold uppercase text-slate-400 border-b border-slate-800">
+            <thead className="border-b border-slate-800 bg-slate-950 text-xs font-semibold uppercase text-slate-400">
               <tr>
                 <th className="px-5 py-4">Kode Booking</th>
-                <th className="px-5 py-4">Nama Penumpang</th>
-                <th className="px-5 py-4">Kereta & Rute</th>
-                <th className="px-5 py-4">Gerbong / Kursi</th>
+                <th className="px-5 py-4">Penumpang</th>
+                <th className="px-5 py-4">Kereta &amp; Rute</th>
                 <th className="px-5 py-4">Total Bayar</th>
-                <th className="px-5 py-4">Metode</th>
                 <th className="px-5 py-4">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-medium">
-              {filteredData.length === 0 ? (
+              {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
+                    Memuat laporan transaksi dari Supabase...
+                  </td>
+                </tr>
+              ) : filteredData.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
                     Tidak ada catatan transaksi pemesanan yang sesuai.
                   </td>
                 </tr>
               ) : (
                 filteredData.map((order) => (
-                  <tr key={order.id} className="hover:bg-slate-800/40 transition">
+                  <tr key={order.id} className="transition hover:bg-slate-800/40">
                     <td className="px-5 py-4">
-                      <span className="font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-1 rounded border border-amber-500/20">
+                      <span className="rounded border border-amber-500/20 bg-amber-500/10 px-2 py-1 font-mono font-bold text-amber-400">
                         {order.kodeBooking}
                       </span>
-                      <div className="text-[11px] text-slate-500 mt-1">{order.tanggalWaktu}</div>
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        {formatTanggal(order.createdAt)} WIB
+                      </div>
                     </td>
                     <td className="px-5 py-4">
-                      <div className="font-bold text-white">{order.penumpangNama}</div>
-                      <div className="text-xs text-slate-500 font-mono">NIK: {order.identitas}</div>
+                      {order.penumpangList && order.penumpangList.length > 0 ? (
+                        <div className="space-y-1">
+                          {order.penumpangList.map((p, idx) => (
+                            <div key={idx}>
+                              <span className="font-bold text-white">{p.nama}</span>
+                              <span className="ml-2 rounded bg-slate-950 px-1.5 py-0.5 font-mono text-[11px] text-amber-300">
+                                {p.kursi}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="font-bold text-white">{order.pemesanNama}</div>
+                      )}
+                      <div className="mt-0.5 text-[11px] text-slate-500">
+                        Akun: {order.pemesanEmail}
+                      </div>
                     </td>
                     <td className="px-5 py-4">
-                      <div className="text-xs font-bold text-slate-200">{order.keretaNama}</div>
+                      <div className="text-xs font-bold text-slate-200">
+                        {order.namaKereta}
+                      </div>
                       <div className="text-[11px] text-slate-400">{order.rute}</div>
-                    </td>
-                    <td className="px-5 py-4">
-                      <span className="text-xs text-slate-300 font-mono font-bold bg-slate-950 px-2 py-1 rounded border border-slate-800">
-                        {order.kursi} ({order.kelas})
-                      </span>
                     </td>
                     <td className="px-5 py-4 font-mono font-bold text-white">
                       {formatRupiah(order.totalBayar)}
                     </td>
-                    <td className="px-5 py-4 text-xs text-slate-400">{order.metodePembayaran}</td>
                     <td className="px-5 py-4">
                       <span
-                        className={`px-2.5 py-1 rounded-md text-xs font-bold ${
+                        className={`rounded-md border px-2.5 py-1 text-xs font-bold ${
                           order.statusPembayaran === 'PAID'
-                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                            ? 'border-emerald-800 bg-emerald-950 text-emerald-400'
                             : order.statusPembayaran === 'PENDING'
-                            ? 'bg-amber-950 text-amber-400 border border-amber-800'
-                            : 'bg-red-950 text-red-400 border border-red-800'
+                              ? 'border-amber-800 bg-amber-950 text-amber-400'
+                              : 'border-red-800 bg-red-950 text-red-400'
                         }`}
                       >
                         {order.statusPembayaran === 'PAID'
                           ? 'Lunas'
                           : order.statusPembayaran === 'PENDING'
-                          ? 'Menunggu'
-                          : 'Batal'}
+                            ? 'Menunggu'
+                            : 'Batal'}
                       </span>
                     </td>
                   </tr>
