@@ -1,43 +1,76 @@
-// src/app/api/admin/route.ts
-// ========================================================================
-// SISTEM INFORMASI KERETA API (KELOMPOK 14)
-// Route Handler: Data Dashboard Admin & Pengubah Status Pembayaran
-// ========================================================================
-
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireRole } from '@/lib/auth';
 
-// 1. GET: Ambil seluruh data pemesanan & kalkulasi statistik Supabase
 export async function GET() {
   try {
-    const bookings = await prisma.pemesanan.findMany({
-      include: {
-        user: true,
-        jadwal: {
-          include: {
-            kereta: true,
-            rute: {
-              include: {
-                stasiunAsal: true,
-                stasiunTujuan: true,
+    await requireRole(['ADMIN']);
+  } catch (authErr) {
+    const msg = authErr instanceof Error ? authErr.message : '';
+    return NextResponse.json(
+      {
+        success: false,
+        error: msg === 'FORBIDDEN' ? 'Akses ditolak. Khusus Admin.' : 'Silakan login sebagai Admin.',
+      },
+      { status: msg === 'FORBIDDEN' ? 403 : 401 }
+    );
+  }
+
+  try {
+    const [bookings, stasiunRows, keretaRows] = await Promise.all([
+      prisma.pemesanan.findMany({
+        include: {
+          user: true,
+          jadwal: {
+            include: {
+              kereta: true,
+              rute: {
+                include: {
+                  stasiunAsal: true,
+                  stasiunTujuan: true,
+                },
+              },
+            },
+          },
+          detailTiket: {
+            include: {
+              kursi: {
+                include: {
+                  gerbong: true,
+                },
               },
             },
           },
         },
-        detailTiket: true,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+      prisma.stasiun.findMany({
+        select: { kodeStasiun: true },
+        orderBy: { kodeStasiun: 'asc' },
+      }),
+      prisma.kereta.findMany({
+        select: { namaKereta: true },
+        orderBy: { namaKereta: 'asc' },
+      }),
+    ]);
 
-    // Hitung ringkasan statistik
     const totalPesanan = bookings.length;
     const pendingCount = bookings.filter((b) => b.statusPembayaran === 'PENDING').length;
     const paidCount = bookings.filter((b) => b.statusPembayaran === 'PAID').length;
     const totalPendapatan = bookings
       .filter((b) => b.statusPembayaran === 'PAID')
       .reduce((acc, curr) => acc + Number(curr.totalBayar), 0);
+
+    const stasiunSample = stasiunRows
+      .slice(0, 4)
+      .map((s) => s.kodeStasiun)
+      .join(', ');
+    const keretaSample = keretaRows
+      .slice(0, 3)
+      .map((k) => k.namaKereta)
+      .join(', ');
 
     return NextResponse.json({
       success: true,
@@ -46,22 +79,34 @@ export async function GET() {
         pendingCount,
         paidCount,
         totalPendapatan,
+        totalStasiun: stasiunRows.length,
+        keretaAktif: keretaRows.length,
+        stasiunSample: stasiunSample ? `${stasiunSample}, dll.` : 'Belum ada data stasiun',
+        keretaSample: keretaSample ? `${keretaSample}, dll.` : 'Belum ada data kereta',
       },
       bookings: bookings.map((b) => ({
         id: b.id,
         kodeBooking: b.kodeBooking,
         pemesanNama: b.user?.nama || 'Penumpang KAI',
-        pemesanEmail: b.user?.email || 'user@example.com',
-        namaKereta: b.jadwal?.kereta?.namaKereta || 'Taksaka Malam',
+        pemesanEmail: b.user?.email || '-',
+        penumpangList: b.detailTiket.map((t) => ({
+          nama: t.penumpangNama,
+          identitas: t.penumpangIdentitas,
+          kursi: t.kursi
+            ? `${t.kursi.gerbong?.namaGerbong || ''} ${t.kursi.nomorKursi}`.trim()
+            : '-',
+          statusTiket: t.statusTiket,
+        })),
+        namaKereta: b.jadwal?.kereta?.namaKereta || '-',
         rute: b.jadwal?.rute
           ? `${b.jadwal.rute.stasiunAsal.kodeStasiun} → ${b.jadwal.rute.stasiunTujuan.kodeStasiun}`
-          : 'GMR → YK',
+          : '-',
         totalBayar: Number(b.totalBayar),
         statusPembayaran: b.statusPembayaran,
         createdAt: b.createdAt.toISOString(),
       })),
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('[API ADMIN GET ERROR]:', error);
     return NextResponse.json(
       { success: false, error: 'Gagal mengambil data dari database Supabase.' },
@@ -70,8 +115,20 @@ export async function GET() {
   }
 }
 
-// 2. PATCH: Mengubah status pembayaran (misal: Ubah ke PAID)
 export async function PATCH(request: Request) {
+  try {
+    await requireRole(['ADMIN']);
+  } catch (authErr) {
+    const msg = authErr instanceof Error ? authErr.message : '';
+    return NextResponse.json(
+      {
+        success: false,
+        error: msg === 'FORBIDDEN' ? 'Akses ditolak. Khusus Admin.' : 'Silakan login sebagai Admin.',
+      },
+      { status: msg === 'FORBIDDEN' ? 403 : 401 }
+    );
+  }
+
   try {
     const body = await request.json();
     const { kodeBooking, statusPembayaran } = body;
@@ -93,7 +150,7 @@ export async function PATCH(request: Request) {
       message: `Tiket ${kodeBooking} berhasil diubah ke ${statusPembayaran || 'PAID'}!`,
       booking: updated,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('[API ADMIN PATCH ERROR]:', error);
     return NextResponse.json({ error: 'Gagal mengubah status pembayaran.' }, { status: 500 });
   }
