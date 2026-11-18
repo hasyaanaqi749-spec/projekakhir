@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="railinkBg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FBBF24" />
+      <stop offset="100%" stop-color="#D97706" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background Kotak Membulat Khas Railink -->
+  <rect x="0" y="0" width="64" height="64" rx="16" fill="url(#railinkBg)" />
+
+  <!-- Bodi Depan Kereta Cepat -->
+  <rect x="16" y="10" width="32" height="34" rx="9" fill="#0F172A" />
+
+  <!-- Lampu Indikator Atas -->
+  <rect x="26" y="13.5" width="12" height="2.5" rx="1.25" fill="#FBBF24" />
+
+  <!-- Kaca Depan Masinis -->
+  <rect x="20" y="19" width="24" height="11" rx="3" fill="#FFFFFF" />
+
+  <!-- Lampu Utama Kiri & Kanan -->
+  <circle cx="23" cy="36.5" r="3" fill="#FBBF24" />
+  <circle cx="41" cy="36.5" r="3" fill="#FBBF24" />
+
+  <!-- Rel Kereta di Bagian Bawah -->
+  <path d="M23 45L16 54" stroke="#0F172A" stroke-width="4.2" stroke-linecap="round" />
+  <path d="M41 45L48 54" stroke="#0F172A" stroke-width="4.2" stroke-linecap="round" />
+  <path d="M19 50H45" stroke="#0F172A" stroke-width="3" stroke-linecap="round" />
+</svg>
